@@ -2,30 +2,49 @@
 import os
 import ast
 import networkx as nx
-import argparse
-import sys
+import charset_normalizer as cn
+import fnmatch
 
-def find_py_files(root):
+IRRELEVANT_PATTERNS = [
+    '__init__.py',
+    'test_*.py', '*_test.py',
+    'setup.py', 'conftest.py',
+    'manage.py', 'wsgi.py', 'asgi.py'
+]
+
+def find_py_files(root, include_ignored=False):
     """
     Yield all Python files under `root` as paths relative to `root`.
+    Skips directories in IGNORE_DIRS and files matching IRRELEVANT_PATTERNS
+    unless include_ignored=True.
     """
-    for dirpath, _, files in os.walk(root):
+    IGNORE_DIRS = {'.venv', 'venv', 'env', '__pycache__', '.git'}
+
+    for dirpath, dirnames, files in os.walk(root):
+        # skip unwanted directories
+        dirnames[:] = [d for d in dirnames if d not in IGNORE_DIRS]
         for fn in files:
-            if fn.endswith('.py'):
-                yield os.path.relpath(os.path.join(dirpath, fn), root)
+            if not fn.endswith('.py'):
+                continue
+            # skip irrelevant files unless explicitly included
+            if not include_ignored and any(fnmatch.fnmatch(fn, pat) for pat in IRRELEVANT_PATTERNS):
+                continue
+            yield os.path.relpath(os.path.join(dirpath, fn), root)
 
 
 def parse_imports(path):
     """
     Parse a Python file and return a set of dotted module names it imports.
-
-    - `import foo.bar`       → yields "foo.bar"
-    - `from foo import bar`  → yields "foo.bar"
-    - `from foo.bar import baz` → yields "foo.bar.baz"
     """
     imports = set()
-    with open(path, 'r', encoding='utf8') as f:
-        tree = ast.parse(f.read(), path)
+    raw = open(path, 'rb').read()
+    matches = cn.from_bytes(raw)
+    try:
+        encoding = matches.best().encoding
+    except Exception:
+        encoding = 'utf-8'
+    content = raw.decode(encoding, errors='replace')
+    tree = ast.parse(content, path)
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -39,76 +58,50 @@ def parse_imports(path):
     return imports
 
 
-def build_graph(root):
+def build_graph(root, include_ignored=False):
     """
     Build a directed graph where nodes are Python files (relative paths)
-    and edges A → B denote that file A imports or depends on file B.
+    and A→B if A imports/uses B.
     """
-    file_map = {rel: os.path.join(root, rel) for rel in find_py_files(root)}
+    file_map = {rel: os.path.join(root, rel)
+                for rel in find_py_files(root, include_ignored)}
     G = nx.DiGraph()
-    G.add_nodes_from(file_map.keys())
+    G.add_nodes_from(file_map)
 
     for src_rel, src_abs in file_map.items():
         for mod in parse_imports(src_abs):
             full_path = mod.replace('.', os.sep) + '.py'
             parent = '.'.join(mod.split('.')[:-1])
             parent_path = parent.replace('.', os.sep) + '.py' if parent else None
-
             for candidate in (full_path, parent_path):
-                if candidate and candidate in file_map:
+                if candidate in file_map:
                     G.add_edge(src_rel, candidate)
                     break
     return G
 
 
-def highlight(G, root, starts, reverse=False):
+def get_statuses(G, roots, reverse=False):
     """
-    Highlight files reachable from (or reaching) any of the `starts` files.
-
-    - Normal mode: green (🟢) = downstream imports, blue (🔵) = selected,
-      grey (⚪) = unrelated.
-    - Reverse mode (-r): green (🟢) = upstream importers (files that use the selected),
-      blue (🔵) = selected, grey (⚪) = unrelated.
+    Return mapping node→status in {'selected','related','ignored','unrelated'}.
+    'ignored' = files matching IRRELEVANT_PATTERNS.
     """
-    G = build_graph(root)
-    missing = [s for s in starts if s not in G]
-    if missing:
-        print("❌ These files weren’t found in the graph:")
-        for s in missing:
-            print("   ", s)
-        sys.exit(1)
-
-    reach = set(starts)
+    reach = set(roots)
     if reverse:
-        for s in starts:
-            reach |= nx.ancestors(G, s)
+        for r in roots:
+            reach |= nx.ancestors(G, r)
     else:
-        for s in starts:
-            reach |= nx.descendants(G, s)
-    d = {}
+        for r in roots:
+            reach |= nx.descendants(G, r)
+
+    statuses = {}
     for node in sorted(G.nodes()):
-        if node in starts:
-            d[node] = 'selected'
+        base = os.path.basename(node)
+        if node in roots:
+            statuses[node] = 'selected'
         elif node in reach:
-            d[node] = 'related'
+            statuses[node] = 'related'
+        elif any(fnmatch.fnmatch(base, pat) for pat in IRRELEVANT_PATTERNS):
+            statuses[node] = 'ignored'
         else:
-            d[node] = 'unrelated'
-        
-    return d
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description='Dep Inspector: highlight file dependencies in a project')
-    parser.add_argument('project_root', help='Path to the project root')
-    parser.add_argument('start_files', nargs='+', help='One or more files to inspect')
-    parser.add_argument('-r', '--reverse', action='store_true',
-                        help='Reverse mode: show which files import the selected ones')
-    args = parser.parse_args()
-
-    highlight(args.project_root, args.start_files, reverse=args.reverse)
-
-
-if __name__ == '__main__':
-    main()
-
+            statuses[node] = 'unrelated'
+    return statuses
