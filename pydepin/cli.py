@@ -17,7 +17,7 @@ console = Console()
 @click.argument("start_files", nargs=-1, required=True)
 @click.option("-d", "--downstream", is_flag=True,
               help="Show only files your selected files import (descendants).")
-@click.option("-r", "--upstream", is_flag=True,
+@click.option("-u", "--upstream", is_flag=True,
               help="Show only files that import your selected files (ancestors).")
 @click.option("--show-ignored", is_flag=True,
               help="Include ignored files like __init__.py")
