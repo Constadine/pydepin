@@ -12,22 +12,19 @@ IRRELEVANT_PATTERNS = [
     'manage.py', 'wsgi.py', 'asgi.py'
 ]
 
+
 def find_py_files(root, include_ignored=False):
     """
     Yield all Python files under `root` as paths relative to `root`.
-    Skips directories in IGNORE_DIRS and files matching IRRELEVANT_PATTERNS
-    unless include_ignored=True.
+    Skips boilerplate/irrelevant files unless include_ignored=True.
     """
-    IGNORE_DIRS = {'.venv', 'venv', 'env', '__pycache__', '.git'}
-
+    ignore_dirs = {'.venv', 'venv', 'env', '__pycache__', '.git'}
     for dirpath, dirnames, files in os.walk(root):
-        # skip unwanted directories
-        dirnames[:] = [d for d in dirnames if d not in IGNORE_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in ignore_dirs]
         for fn in files:
             if not fn.endswith('.py'):
                 continue
-            # skip irrelevant files unless explicitly included
-            if not include_ignored and any(fnmatch.fnmatch(fn, pat) for pat in IRRELEVANT_PATTERNS):
+            if not include_ignored and fn in IRRELEVANT_PATTERNS:
                 continue
             yield os.path.relpath(os.path.join(dirpath, fn), root)
 
@@ -61,12 +58,11 @@ def parse_imports(path):
 def build_graph(root, include_ignored=False):
     """
     Build a directed graph where nodes are Python files (relative paths)
-    and A→B if A imports/uses B.
+    and edges A -> B denote A imports or depends on B.
     """
-    file_map = {rel: os.path.join(root, rel)
-                for rel in find_py_files(root, include_ignored)}
+    file_map = {rel: os.path.join(root, rel) for rel in find_py_files(root, include_ignored)}
     G = nx.DiGraph()
-    G.add_nodes_from(file_map)
+    G.add_nodes_from(file_map.keys())
 
     for src_rel, src_abs in file_map.items():
         for mod in parse_imports(src_abs):
@@ -80,27 +76,34 @@ def build_graph(root, include_ignored=False):
     return G
 
 
-def get_statuses(G, roots, reverse=False):
+def get_statuses(G, roots, downstream=True, upstream=False):
     """
-    Return mapping node→status in {'selected','related','ignored','unrelated'}.
-    'ignored' = files matching IRRELEVANT_PATTERNS.
+    Return a dict mapping node -> status:
+      'selected'   (# roots),
+      'descendant' (files your roots import),
+      'ancestor'   (files that import your roots),
+      'ignored'    (boilerplate like __init__.py),
+      'unrelated'  (everything else).
+    downstream=True includes descendants, upstream=True includes ancestors.
     """
-    reach = set(roots)
-    if reverse:
+    desc = set()
+    anc = set()
+    if downstream:
         for r in roots:
-            reach |= nx.ancestors(G, r)
-    else:
+            desc |= nx.descendants(G, r)
+    if upstream:
         for r in roots:
-            reach |= nx.descendants(G, r)
+            anc |= nx.ancestors(G, r)
 
     statuses = {}
     for node in sorted(G.nodes()):
-        base = os.path.basename(node)
         if node in roots:
             statuses[node] = 'selected'
-        elif node in reach:
-            statuses[node] = 'related'
-        elif any(fnmatch.fnmatch(base, pat) for pat in IRRELEVANT_PATTERNS):
+        elif node in desc:
+            statuses[node] = 'descendant'
+        elif node in anc:
+            statuses[node] = 'ancestor'
+        elif os.path.basename(node) in IRRELEVANT_PATTERNS:
             statuses[node] = 'ignored'
         else:
             statuses[node] = 'unrelated'

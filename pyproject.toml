@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pydepin"
-version = "0.2.0"
+version = "0.3.0"
 description = "Highlight file-dependency reachability in Python projects"
 readme = "README.md"
 authors = [{name="Konstantinos", email="kons.papagiannopoulos@gmail.com"}]
