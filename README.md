@@ -1,1 +1,2 @@
-# pydepin\n\nHighlight file-dependency reachability in Python projects.
+#pydepin
+Highlight file-dependency reachability in Python projects.
