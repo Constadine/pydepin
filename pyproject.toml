@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pydepin"
+version = "0.1.0"
+description = "Highlight file-dependency reachability in Python projects"
+readme = "README.md"
+authors = [{name="Konstantinos", email="kons.papagiannopoulos@gmail.com"}]
+license = {text = "MIT"}
+dependencies = [
+  "networkx>=2.8",
+  "click>=8.0",
+  "rich>=12.0"
+]
+
+[project.scripts]
+pydepin = "pydepin.cli:main"
+
