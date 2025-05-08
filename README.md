@@ -41,12 +41,40 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 ```
+## Optional: Enable LSP-powered analysis
 
-Then run with:
+`pydepin` offers a **heavier but more accurate** mode using static analysis via [Jedi](https://github.com/davidhalter/jedi), a Python language server backend.
+
+This mode leverages Jedi's ability to resolve actual definitions and module paths more reliably than AST-based heuristics. It's useful when your project structure or dynamic imports make `pydepin`'s basic analysis insufficient.
+
+### Install with LSP support
+
+#### Option A: via pipx (recommended)
 
 ```bash
-pydepin path/to/project entry.py
+pipx install 'git+https://github.com/Constadine/pydepin.git#egg=pydepin[lsp]'
 ```
+#### Option B: in a local dev environment
+```bash
+git clone https://github.com/Constadine/pydepin.git
+cd pydepin
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .[lsp]
+```
+## CLI usage
+### Basic (lightweight) mode
+```bash
+pydepin ./myproject main.py
+```
+Uses only AST parsing for fast, dependency-light analysis.
+
+### LSP (Jedi-enhanced) mode
+```bash
+pydepin-lsp ./myproject main.py
+```
+
+Uses Jedi to resolve actual module paths and dependencies. Slower but more precise. Ideal for large, complex, or unfamiliar codebases.
 
 ---
 

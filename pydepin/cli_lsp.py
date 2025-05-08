@@ -1,4 +1,4 @@
-# pydepin/cli_ast.py
+# pydepin/cli_lsp.py
 #!/usr/bin/env python3
 import os
 import difflib
@@ -7,12 +7,12 @@ from typing import List
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from .core import build_graph, get_statuses
+from .core_lsp import build_graph, get_statuses
 
-app = typer.Typer(help="AST-based (lightweight) file‐dependency inspector")
+app = typer.Typer(help="LSP-powered (heavy) file‐dependency inspector")
 console = Console()
 
-@app.command("pydepin")
+@app.command("pydepin-lsp")
 def main(
     project_root: str = typer.Argument(..., help="Path to the project root."),
     start_files: List[str] = typer.Argument(..., help="One or more Python files (relative to root)."),
@@ -22,17 +22,17 @@ def main(
     only_highlighted: bool = typer.Option(False, "--only-highlighted", "-o", help="Hide ⚪ files."),
 ):
     """
-    AST-only version (fast to install, minimal deps).
+    LSP-based version (requires `pylsp` + `python-lsp-jsonrpc`).
     """
     if not downstream and not upstream:
         downstream = upstream = True
 
     with Progress(SpinnerColumn(), TextColumn("{task.description}"), transient=True, console=console) as progress:
-        t1 = progress.add_task("Building graph…", total=None)
+        t1 = progress.add_task("Launching LSP server…", total=None)
         G = build_graph(project_root, include_ignored=show_ignored)
         progress.update(t1, completed=True)
 
-        t2 = progress.add_task("Analyzing…", total=None)
+        t2 = progress.add_task("Querying references…", total=None)
         normalized = [os.path.relpath(s, project_root) if os.path.isabs(s) else s
                       for s in start_files]
 
