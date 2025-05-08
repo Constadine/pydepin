@@ -126,5 +126,5 @@ Uses Jedi to resolve actual module paths and dependencies. Slower but more preci
 
 ## License
 
-MIT © Konstantinos Papagiannopoulos
+MIT
 
