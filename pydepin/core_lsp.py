@@ -21,7 +21,7 @@ def build_graph(root: str, include_ignored: bool = False) -> nx.DiGraph:
     G.add_nodes_from(file_map.keys())
 
     # Create a Jedi project rooted at `root`
-    project = jedi.Project(path=root)
+    project = jedi.Project(path=root, sys_path=[root])
         
     def _process(src_rel: str, abs_path: str):
         edges = []
@@ -33,33 +33,36 @@ def build_graph(root: str, include_ignored: bool = False) -> nx.DiGraph:
             return edges
 
         for node in ast.walk(tree):
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                for alias in node.names:
-                    line = node.lineno
-                    col0 = node.col_offset
-                    line_text = code.splitlines()[line - 1]
-                    col = line_text.find(alias.name, col0)
-                    if col < 0:
-                        col = col0
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
 
-                    try:
-                        defs = script.goto(line=line, column=col)
-                    except Exception:
+            for alias in node.names:
+                # locate the alias text in the source line
+                line = node.lineno
+                col0 = node.col_offset
+                line_text = code.splitlines()[line - 1]
+                col = line_text.find(alias.name, col0)
+                if col < 0:
+                    col = col0
+
+                try:
+                    defs = script.goto(line=line, column=col)
+                except Exception:
+                    continue
+
+                for d in defs:
+                    mp = d.module_path
+                    if not mp:
                         continue
+                    # 3) coerce Path → str before string ops
+                    mp = str(mp)
+                    if not mp.startswith(root):
+                        continue
+                    rel = os.path.relpath(mp, root)
+                    if rel in file_map:
+                        edges.append((src_rel, rel))
 
-                    for d in defs:
-                        mp = d.module_path
-                        if not mp:
-                            continue
-                        # Convert to str before checking path relationships
-                        mp = str(mp)
-                        if not mp.startswith(root):
-                            continue
-                        rel = os.path.relpath(mp, root)
-                        if rel in file_map:
-                            edges.append((src_rel, rel))
         return edges
-
 
     # Parallel processing of files
     with ThreadPoolExecutor(max_workers=1) as executor:
