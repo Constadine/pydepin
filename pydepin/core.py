@@ -1,22 +1,28 @@
+# core.py
 #!/usr/bin/env python3
 import os
 import ast
-import networkx as nx
-import charset_normalizer as cn
+import re
 import fnmatch
+import networkx as nx
+from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# Patterns for files to ignore by default
 IRRELEVANT_PATTERNS = [
     '__init__.py',
     'test_*.py', '*_test.py',
     'setup.py', 'conftest.py',
     'manage.py', 'wsgi.py', 'asgi.py'
 ]
+# compile into a single regex
+_IGNORE_RE = re.compile("|".join(fnmatch.translate(p) for p in IRRELEVANT_PATTERNS))
 
 
 def find_py_files(root, include_ignored=False):
     """
     Yield all Python files under `root` as paths relative to `root`.
-    Skips boilerplate/irrelevant files unless include_ignored=True.
+    Skips irrelevant files unless include_ignored=True.
     """
     ignore_dirs = {'.venv', 'venv', 'env', '__pycache__', '.git'}
     for dirpath, dirnames, files in os.walk(root):
@@ -24,24 +30,24 @@ def find_py_files(root, include_ignored=False):
         for fn in files:
             if not fn.endswith('.py'):
                 continue
-            if not include_ignored and fn in IRRELEVANT_PATTERNS:
+            if not include_ignored and _IGNORE_RE.match(fn):
                 continue
             yield os.path.relpath(os.path.join(dirpath, fn), root)
 
 
+@lru_cache(maxsize=None)
 def parse_imports(path):
     """
     Parse a Python file and return a set of dotted module names it imports.
+    Errors in reading/encoding are ignored.
     """
     imports = set()
-    raw = open(path, 'rb').read()
-    matches = cn.from_bytes(raw)
     try:
-        encoding = matches.best().encoding
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        tree = ast.parse(content, path)
     except Exception:
-        encoding = 'utf-8'
-    content = raw.decode(encoding, errors='replace')
-    tree = ast.parse(content, path)
+        return imports
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -59,32 +65,35 @@ def build_graph(root, include_ignored=False):
     """
     Build a directed graph where nodes are Python files (relative paths)
     and edges A -> B denote A imports or depends on B.
+    This version parses files in parallel.
     """
-    file_map = {rel: os.path.join(root, rel) for rel in find_py_files(root, include_ignored)}
+    file_map = {rel: os.path.join(root, rel)
+                for rel in find_py_files(root, include_ignored)}
     G = nx.DiGraph()
     G.add_nodes_from(file_map.keys())
 
-    for src_rel, src_abs in file_map.items():
-        for mod in parse_imports(src_abs):
-            full_path = mod.replace('.', os.sep) + '.py'
-            parent = '.'.join(mod.split('.')[:-1])
-            parent_path = parent.replace('.', os.sep) + '.py' if parent else None
-            for candidate in (full_path, parent_path):
-                if candidate in file_map:
-                    G.add_edge(src_rel, candidate)
-                    break
+    with ThreadPoolExecutor() as executor:
+        futures = {executor.submit(parse_imports, path): rel
+                   for rel, path in file_map.items()}
+        for future in as_completed(futures):
+            src_rel = futures[future]
+            imports = future.result()
+            for mod in imports:
+                full_path = mod.replace('.', os.sep) + '.py'
+                parent = '.'.join(mod.split('.')[:-1])
+                parent_path = parent.replace('.', os.sep) + '.py' if parent else None
+                for candidate in (full_path, parent_path):
+                    if candidate in file_map:
+                        G.add_edge(src_rel, candidate)
+                        break
     return G
 
 
 def get_statuses(G, roots, downstream=True, upstream=False):
     """
     Return a dict mapping node -> status:
-      'selected'   (# roots),
-      'descendant' (files your roots import),
-      'ancestor'   (files that import your roots),
-      'ignored'    (boilerplate like __init__.py),
-      'unrelated'  (everything else).
-    downstream=True includes descendants, upstream=True includes ancestors.
+      'selected', 'descendant', 'ancestor', 'ignored', 'unrelated'.
+    downstream includes descendants, upstream includes ancestors.
     """
     desc = set()
     anc = set()
@@ -103,7 +112,7 @@ def get_statuses(G, roots, downstream=True, upstream=False):
             statuses[node] = 'descendant'
         elif node in anc:
             statuses[node] = 'ancestor'
-        elif os.path.basename(node) in IRRELEVANT_PATTERNS:
+        elif _IGNORE_RE.match(os.path.basename(node)):
             statuses[node] = 'ignored'
         else:
             statuses[node] = 'unrelated'
